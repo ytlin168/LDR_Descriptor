@@ -10,11 +10,11 @@ use File::Basename;
 use File::Path qw(make_path);
 
 # Define document name and target protein name
-my $doc_name = "3B1M_Diversity_Flexibility";  # Name of the molecular window to analyze
+my $doc_name = "3B1M";  # Name of the molecular window to analyze
 my $protein_name = "3B1M";  # Name of the target protein
 my $Hbond_length = "10";  # Hydrogen bond length
 my $test_name = $doc_name . "(" .$Hbond_length. ")";
-my $save_path = "C:/Users/ytlin/Desktop/results/receptor/GOLD_diversity_0.5/0.9_0.45/" . $test_name . "/";  # Save path for each ligand configuration (target folder must be created manually)
+my $save_path = "C:/Users/ytlin/Desktop/results/receptor/GOLD_flexible_diversity/0.9_0.45/" . $test_name . "/";  # Save path for each ligand configuration (target folder must be created manually)
 my $property = 'Gold.Goldscore.Fitness';  # Name of the scoring function
 
 # Set the save path for the hydrogen bond configuration summary results
@@ -163,6 +163,32 @@ if (defined $doc) {
             push @{$ligand_groups{$ligand->Name}}, $ligand;
         }
 
+        # Pre-cache copies of the key residues into the %copied_residues hash before the main loop
+        my %copied_residues;
+        foreach my $ligand_residue_name ("HIS323323", "HIS449449", "TYR473473") {
+                my $ligand_residue;
+                my $Molecules_for_res = $doc->AllMolecules;
+                eval {
+                    for (my $i = 0; $i < $Molecules_for_res->Count; $i++) {
+                        my $mol;
+                        eval { $mol = $Molecules_for_res->Item($i); };
+                        if ($@) {
+                            print "Error accessing molecule item: $@\n";
+                            next;
+                        }
+                        if ($mol->Name eq $ligand_residue_name) {
+                            $copied_residues{$ligand_residue_name} = $mol->Copy();
+                            $ligand_residue = $mol;                            
+                            last;
+                        }
+                    }                
+                };
+                if ($@) {
+                    print "Error accessing molecule $ligand_residue_name: $@\n";
+                    next;
+                }
+            }
+
         foreach my $ligand_name (keys %ligand_groups) {
             my $new_doc = Mdm::Document::Create();
             foreach my $ligand (@{$ligand_groups{$ligand_name}}) {
@@ -178,41 +204,17 @@ if (defined $doc) {
                 }
             }
 
-            # Ensure each new window contains the three critical residues: HIS323, HIS449, and TYR473
+            # Use the %copied_residues hash to ensure each new window contains the three critical residues: HIS323, HIS449, and TYR473
             my %target_residue_names = map { $_ => 1 } ("HIS323323", "HIS449449", "TYR473473");
-            foreach my $ligand_residue_name ("HIS323323", "HIS449449", "TYR473473") {
-                my $ligand_residue;
-                my $Molecules2 = $doc->AllMolecules;
+            foreach my $ligand_residue_name (keys %copied_residues) {
                 eval {
-                    for (my $i = 0; $i < $Molecules2->Count; $i++) {
-                        my $mol;
-                        eval { $mol = $Molecules2->Item($i); };
-                        if ($@) {
-                            print "Error accessing molecule item: $@\n";
-                            next;
-                        }
-                        if ($mol->Name eq $ligand_residue_name) {
-                            $ligand_residue = $mol;                            
-                            last;
-                        }
-                    }                
+                    my $ligand_residue_copy = $copied_residues{$ligand_residue_name}->Copy();
+                    my $newDocumentRoot = $new_doc->RootObject;
+                    my $new_molecule = $new_doc->ChangeObjectParent($ligand_residue_copy, $newDocumentRoot);  
                 };
                 if ($@) {
-                    print "Error accessing molecule $ligand_residue_name: $@\n";
+                    print "Error copying ligand $ligand_residue_name to new document: $@\n";
                     next;
-                }
-                if (defined $ligand_residue) {
-                    eval {
-                       my $ligand_residue_copy = $ligand_residue->Copy();
-                       my $newDocumentRoot = $new_doc->RootObject;
-                       my $new_molecule = $new_doc->ChangeObjectParent($ligand_residue_copy, $newDocumentRoot);  
-                    };
-                    if ($@) {
-                        print "Error copying ligand $ligand_residue_name to new document: $@\n";
-                        next;
-                    }
-                } else {
-                    print "Ligand $ligand_residue_name not found.\n";
                 }
             }
 
@@ -252,7 +254,7 @@ if (defined $doc) {
                 }
             }
 
-            # List the top 20 names and scores in the output window
+            # List the top 20 names and scores in the script output window
             print "Top 20 ligands and their scores:\n";
             for (my $i = 0; $i < @selected_ligands; $i++) {
                 print $selected_ligands[$i]->{ligand}->Name . ": " . $selected_ligands[$i]->{score} . "\n";
@@ -312,7 +314,7 @@ if (defined $doc) {
                 my $non_bonds = $Hbondmonitor->Nonbonds;
                 my $csv_path = $save_path . $ligand_name . "_non_bond_data.csv";
                 open(my $fh, '>', $csv_path) or die "Could not open file '$csv_path' $!";
-                print $fh "Name,ID,Visible,Visibility Locked,Color,Parent,XYZ:X,XYZ:Y,XYZ:Z,Distance,Category,Types,From,From Chemistry,To,To Chemistry,Angle DHA,Angle HAY,Angle XDA,Angle DAY\n";  # Add Excel headers based on attribute names
+                print $fh "Name,ID,Visible,Visibility Locked,Color,Parent,XYZ:X,XYZ:Y,XYZ:Z,Distance,Category,Types,From,From Chemistry,To,To Chemistry,Angle DHA,Angle HAY,Angle XDA,Angle DAY\n";  # Add Excel header row based on attribute names
                 
                 for (my $i = 0; $i < $non_bonds->Count; $i++) {  # Starting index modified to 0; adjusted loop condition
                     eval {
@@ -352,7 +354,7 @@ if (defined $doc) {
                                              
                     
             # Save the molecular window after H-bond prediction as a .dsv file
-            my $new_file_name = $save_path . $ligand_name . ".dsv";  # Save based on the initial configuration
+            my $new_file_name = $save_path . $ligand_name . ".dsv";  # Save using the path defined at the top of the script
             $new_doc->Save($new_file_name, 'dsv');
             print "New document for ligand $ligand_name has been saved as $new_file_name.\n";
 
